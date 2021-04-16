@@ -7,7 +7,7 @@
  * @module image/image/utils
  */
 
-import { findOptimalInsertionPosition, isWidget, toWidget } from 'ckeditor5/src/widget';
+import { findOptimalInsertionRange, isWidget, toWidget } from 'ckeditor5/src/widget';
 import { first } from 'ckeditor5/src/utils';
 
 /**
@@ -113,7 +113,31 @@ export function isImage( modelElement ) {
 }
 
 /**
- * Handles inserting single file. This method unifies image insertion using {@link module:widget/utils~findOptimalInsertionPosition} method.
+ * Checks if the provided view element represents an inline image.
+ *
+ * Also, see {@link module:image/image/utils~isImageWidget}.
+ *
+ * @param {module:engine/view/element~Element} element
+ * @returns {Boolean}
+ */
+export function isInlineImageView( element ) {
+	return !!element && element.is( 'element', 'img' );
+}
+
+/**
+ * Checks if the provided view element represents a block image.
+ *
+ * Also, see {@link module:image/image/utils~isImageWidget}.
+ *
+ * @param {module:engine/view/element~Element} element
+ * @returns {Boolean}
+ */
+export function isBlockImageView( element ) {
+	return !!element && element.is( 'element', 'figure' ) && element.hasClass( 'image' );
+}
+
+/**
+ * Handles inserting single file. This method unifies image insertion using {@link module:widget/utils~findOptimalInsertionRange} method.
  *
  *		insertImage( model, { src: 'path/to/image.jpg' } );
  *
@@ -121,7 +145,7 @@ export function isImage( modelElement ) {
  * @param {Object} [attributes={}] Attributes of the inserted image.
  * This method filters out the attributes which are disallowed by the {@link module:engine/model/schema~Schema}.
  * @param {module:engine/model/selection~Selectable} [selectable] Place to insert the image. If not specified,
- * the {@link module:widget/utils~findOptimalInsertionPosition} logic will be applied for the block images
+ * the {@link module:widget/utils~findOptimalInsertionRange} logic will be applied for the block images
  * and `model.document.selection` for the inline images.
  * @param {'image'|'imageInline'} [imageType] Image type of inserted image. If not specified,
  * it will be determined automatically depending of editor config or place of the insertion.
@@ -141,8 +165,10 @@ export function insertImage( editor, attributes = {}, selectable = null, imageTy
 	model.change( writer => {
 		const imageElement = writer.createElement( imageType, attributes );
 
-		if ( !selectable && imageType != 'imageInline' && !selection.getSelectedElement() ) {
-			selectable = findOptimalInsertionPosition( selection, model );
+		// If we want to insert a block image (for whatever reason) then we don't want to split text blocks.
+		// This applies only when we don't have the selectable specified (i.e., we insert multiple block images at once).
+		if ( !selectable && imageType != 'imageInline' ) {
+			selectable = findOptimalInsertionRange( selection, model );
 		}
 
 		model.insertContent( imageElement, selectable );
@@ -180,7 +206,7 @@ export function isImageAllowed( editor ) {
  * @returns {module:engine/view/element~Element}
  */
 export function getViewImageFromWidget( figureView ) {
-	if ( figureView.is( 'element', 'img' ) ) {
+	if ( isInlineImageView( figureView ) ) {
 		return figureView;
 	}
 
@@ -194,7 +220,7 @@ export function getViewImageFromWidget( figureView ) {
 		}
 	}
 
-	return figureChildren.find( viewChild => viewChild.is( 'element', 'img' ) );
+	return figureChildren.find( isInlineImageView );
 }
 
 /**
@@ -245,11 +271,13 @@ export function getImageTypeMatcher( matchImageType, editor ) {
 
 	return element => {
 		// Convert only images with src attribute.
-		if ( !element.is( 'element', 'img' ) || !element.hasAttribute( 'src' ) ) {
+		if ( !isInlineImageView( element ) || !element.hasAttribute( 'src' ) ) {
 			return null;
 		}
 
-		const imageType = element.findAncestor( 'figure' ) ? 'image' : 'imageInline';
+		// The <img> can be standalone, wrapped in <figure>...</figure> (ImageBlock plugin) or
+		// wrapped in <figure><a>...</a></figure> (LinkImage plugin).
+		const imageType = element.findAncestor( isBlockImageView ) ? 'image' : 'imageInline';
 
 		if ( imageType !== matchImageType ) {
 			return null;
@@ -257,6 +285,25 @@ export function getImageTypeMatcher( matchImageType, editor ) {
 
 		return { name: true, attributes: [ 'src' ] };
 	};
+}
+
+/**
+ * Considering the current model selection, it returns the name of the model image element
+ * (`'image'` or `'imageInline'`) that will make most sense from the UX perspective if a new
+ * image was inserted (also: uploaded, dropped, pasted) at that selection.
+ *
+ * The assumption is that inserting images into empty blocks or on other block widgets should
+ * produce block images. Inline images should be inserted in other cases, e.g. in paragraphs
+ * that already contain some text.
+ *
+ * @param {module:engine/model/schema~Schema} schema
+ * @param {module:engine/model/selection~Selection|module:engine/model/documentselection~DocumentSelection} selection
+ * @returns {'image'|'imageInline'}
+ */
+export function determineImageTypeForInsertionAtSelection( schema, selection ) {
+	const firstBlock = first( selection.getSelectedBlocks() );
+
+	return ( !firstBlock || firstBlock.isEmpty || schema.isObject( firstBlock ) ) ? 'image' : 'imageInline';
 }
 
 // Checks if image is allowed by schema in optimal insertion parent.
@@ -295,9 +342,8 @@ function isNotInsideImage( selection ) {
 // @param {module:engine/model/model~Model} model
 // @returns {module:engine/model/element~Element}
 function getInsertImageParent( selection, model ) {
-	const insertAt = findOptimalInsertionPosition( selection, model );
-
-	const parent = insertAt.parent;
+	const insertionRange = findOptimalInsertionRange( selection, model );
+	const parent = insertionRange.start.parent;
 
 	if ( parent.isEmpty && !parent.is( 'element', '$root' ) ) {
 		return parent.parent;
@@ -339,9 +385,7 @@ function determineImageTypeForInsertion( editor, selectable, imageType ) {
 
 	// Try to replace the selected widget (e.g. another image).
 	if ( selectable.is( 'selection' ) ) {
-		const firstBlock = first( selectable.getSelectedBlocks() );
-
-		return ( !firstBlock || firstBlock.isEmpty || schema.isObject( firstBlock ) ) ? 'image' : 'imageInline';
+		return determineImageTypeForInsertionAtSelection( schema, selectable );
 	}
 
 	return schema.checkChild( selectable, 'imageInline' ) ? 'imageInline' : 'image';
