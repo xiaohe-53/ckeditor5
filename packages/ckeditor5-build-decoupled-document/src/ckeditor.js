@@ -40,7 +40,10 @@ import TableToolbar from '@ckeditor/ckeditor5-table/src/tabletoolbar';
 import TextTransformation from '@ckeditor/ckeditor5-typing/src/texttransformation';
 import CloudServices from '@ckeditor/ckeditor5-cloud-services/src/cloudservices';
 
-export default class DecoupledEditor extends DecoupledEditorBase {}
+import MathType from '@wiris/mathtype-ckeditor5';
+
+export default class DecoupledEditor extends DecoupledEditorBase {
+}
 
 // Plugins to include in the build.
 DecoupledEditor.builtinPlugins = [
@@ -76,13 +79,15 @@ DecoupledEditor.builtinPlugins = [
 	PasteFromOffice,
 	Table,
 	TableToolbar,
-	TextTransformation
+	TextTransformation,
+	MathType
 ];
 
 // Editor configuration.
 DecoupledEditor.defaultConfig = {
 	toolbar: {
 		items: [
+			'MathType', 'ChemType',
 			'heading',
 			'|',
 			'fontfamily',
